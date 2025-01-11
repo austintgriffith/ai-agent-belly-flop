@@ -1,4 +1,4 @@
-# AI Agent Belly Flop\
+# AI Agent Belly Flop 🤿
 
 > a shallow dive into ai agents
 
