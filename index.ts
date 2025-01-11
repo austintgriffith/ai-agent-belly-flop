@@ -32,10 +32,18 @@ async function generatePrompt(
   playerName: string,
   opponentName: string,
   personality: string,
+  feelings: string[],
   historyTalk: string
 ): Promise<{ action: "rock" | "paper" | "scissors" }> {
+  const moves = ["rock", "paper", "scissors"];
+  const randomMove = moves[Math.floor(Math.random() * moves.length)];
+
   const prompt = `
     you are ${playerName} and you are playing a game of rock paper scissors with ${opponentName}
+    you are feeling ${
+      feelings[Math.floor(Math.random() * feelings.length)]
+    } right now
+    your gut feeling is to go with ${randomMove} but you don't have to, it's just a gut feeling
     ${personality}
     ${historyTalk}
     ${extraStrategyLine}
@@ -77,31 +85,50 @@ async function playRound(): Promise<void> {
   }
 
   const alicePersonality =
-    //"you are a ruthless and cunning player and you will always win";
-    "";
+    "you are a ruthless and cunning player and you will always win";
+  //"";
+
+  const aliceEntropyFeelings = ["Angry", "Excited", "Vindictive"];
+
   const bobPersonality =
-    //"you know alice is a ruthless and cunning player so you have to be careful";
-    "";
+    "you know alice is a ruthless and cunning player so you have to be careful";
+  //"";
+
+  const bobEntropyFeelings = ["Normal", "Midcurve", "Okay"];
 
   let aliceAction;
   let bobAction;
 
   if (CONCURRENT_PROMPTS) {
     [aliceAction, bobAction] = await Promise.all([
-      generatePrompt("alice", "bob", alicePersonality, historyTalk),
-      generatePrompt("bob", "alice", bobPersonality, historyTalk),
+      generatePrompt(
+        "alice",
+        "bob",
+        alicePersonality,
+        aliceEntropyFeelings,
+        historyTalk
+      ),
+      generatePrompt(
+        "bob",
+        "alice",
+        bobPersonality,
+        bobEntropyFeelings,
+        historyTalk
+      ),
     ]);
   } else {
     aliceAction = await generatePrompt(
       "alice",
       "bob",
       alicePersonality,
+      aliceEntropyFeelings,
       historyTalk
     );
     bobAction = await generatePrompt(
       "bob",
       "alice",
       bobPersonality,
+      bobEntropyFeelings,
       historyTalk
     );
   }
@@ -192,7 +219,10 @@ async function run(): Promise<void> {
   }
 }
 
-function determineWinner(aliceAction: string, bobAction: string): string {
+type Move = "rock" | "paper" | "scissors";
+const moves: Move[] = ["rock", "paper", "scissors"];
+
+function determineWinner(aliceAction: Move, bobAction: Move): string {
   if (aliceAction === bobAction) return "draw";
   if (
     (aliceAction === "rock" && bobAction === "scissors") ||
