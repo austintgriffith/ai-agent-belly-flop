@@ -6,7 +6,7 @@ Alice and Bob play Rock Paper Scissors.
 
 ![image](https://github.com/user-attachments/assets/8e03589f-a750-441c-a566-20361c0e9300)
 
-(BuidlGuidl is doing deep dives on ai agenst, and I want to start with a “shallow dive”.)
+(BuidlGuidl is doing a deep dive on ai agents and I want to start with a “shallow dive”.)
 
 
 🎥 [watch the raw run through here: https://streamyard.com/5nmighdmncz7](https://streamyard.com/5nmighdmncz7)
