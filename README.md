@@ -2,12 +2,11 @@
 
 🎥 [watch the raw run through here: https://streamyard.com/5nmighdmncz7](https://streamyard.com/5nmighdmncz7)
 
+(BuidlGuidl is doing deep dives on ai agenst, and I want to start with a “shallow dive”.)
 
-(BuidlGuidl is doing deep dives, and I want to start with “shallow dives.”)
+AI agents are the next evolution of AI and will extend far beyond “crypto”!
 
-I believe AI agents are the next evolution of AI and will extend far beyond “crypto.”
-
-(I’m not an expert on AI agents look up Shaw and all the great work they’re doing!)
+(I’m am dumb, look up Shaw and all the great work they’re doing!)
 
 What are the essential components of AI agency? Memory, actions, and a game loop?
 
