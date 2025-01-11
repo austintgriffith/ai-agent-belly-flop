@@ -1,5 +1,8 @@
 # AI Agent Belly Flop
 
+🎥 [watch the raw run through here: https://streamyard.com/5nmighdmncz7](https://streamyard.com/5nmighdmncz7)
+
+
 (BuidlGuidl is doing deep dives, and I want to start with “shallow dives.”)
 
 I believe AI agents are the next evolution of AI and will extend far beyond “crypto.”
