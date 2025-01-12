@@ -23,3 +23,9 @@ What are the essential components of AI agency? Memory, actions, and a game loop
 Here’s a stupidly simple example where Alice and Bob play rock-paper-scissors…
 
 But this prototype reveals an issue with the models repeating themselves...
+
+-------
+
+check out the trading game branch for a more interesting game:
+
+[https://github.com/austintgriffith/ai-agent-belly-flop/tree/trading-game](https://github.com/austintgriffith/ai-agent-belly-flop/tree/trading-game)
