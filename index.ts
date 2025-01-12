@@ -1,21 +1,84 @@
 import axios, { AxiosError } from "axios";
 import fs from "fs";
+import path from "path";
 
-const DEBUG = false;
 const DEBUG_PROMPTS = false;
 const MAX_ROUNDS = 25;
-const CONCURRENT_PROMPTS = true; // i don't think this causes more draws but it's worth exploring
+const CONCURRENT_PROMPTS = false;
 const MODEL = "llama3.3:latest";
+const BASE_WIDGET_PRICE = 100;
+const PRICE_VOLATILITY = 0.15; // 15% max price movement per round
 
-const extraStrategyLine =
-  //"Play unpredictably to avoid patterns, but actively analyze and exploit opponents’ behavioral tendencies to counter their predictable moves. Adapt dynamically by recognizing if the opponent is using strategies and counter-strategies, and shift between randomness and pattern exploitation accordingly.";
-  ""; // the more you write here the longer the games take so it's a trade off
+interface PlayerState {
+  credits: number;
+  widgets: number;
+  valueEstimate: number;
+  history: AgentHistory[];
+}
 
-const totalScore = {
-  alice: 0,
-  bob: 0,
-  draw: 0,
-};
+interface Agent {
+  name: string;
+  personality: string;
+  initialState: PlayerState;
+}
+
+interface GameState {
+  currentPrice: number;
+  agents: Map<string, PlayerState>;
+  round: number;
+}
+
+interface AgentHistory {
+  action: "buy" | "sell" | "hold";
+  amount: number;
+  price: number;
+  round: number;
+}
+
+// Load all agents from the agents directory
+function loadAgents(): Agent[] {
+  const agentsDir = path.join(process.cwd(), "agents");
+  const agentFiles = fs
+    .readdirSync(agentsDir)
+    .filter((file) => file.endsWith(".json"));
+
+  return agentFiles.map((file) => {
+    const agentData = fs.readFileSync(path.join(agentsDir, file), "utf8");
+    return JSON.parse(agentData) as Agent;
+  });
+}
+
+// Initialize game state with loaded agents
+function initializeGameState(): GameState {
+  const agents = loadAgents();
+  const agentStates = new Map<string, PlayerState>();
+
+  agents.forEach((agent) => {
+    agentStates.set(agent.name, {
+      ...agent.initialState,
+      history: [],
+    });
+  });
+
+  return {
+    currentPrice: BASE_WIDGET_PRICE,
+    agents: agentStates,
+    round: 0,
+  };
+}
+
+const gameState: GameState = initializeGameState();
+
+function updatePrice(): number {
+  const maxMove = gameState.currentPrice * PRICE_VOLATILITY;
+  const priceMove = (Math.random() * 2 - 1) * maxMove;
+  gameState.currentPrice = Math.max(1, gameState.currentPrice + priceMove);
+  return gameState.currentPrice;
+}
+
+function calculateNetWorth(player: PlayerState, currentPrice: number): number {
+  return player.credits + player.widgets * currentPrice;
+}
 
 async function sendToModel(prompt: string): Promise<string> {
   //requires a local version of 'ollama serve' running
@@ -32,22 +95,65 @@ async function generatePrompt(
   playerName: string,
   opponentName: string,
   personality: string,
-  feelings: string[],
+  state: PlayerState,
+  currentPrice: number,
   historyTalk: string
-): Promise<{ action: "rock" | "paper" | "scissors" }> {
-  const moves = ["rock", "paper", "scissors"];
-  const randomMove = moves[Math.floor(Math.random() * moves.length)];
+): Promise<{ action: "buy" | "sell" | "hold"; amount: number }> {
+  // Calculate price trend from recent history
+  const priceHistory = state.history.map((h) => h.price);
+  const priceChange =
+    priceHistory.length >= 2
+      ? (((currentPrice - priceHistory[0]) / priceHistory[0]) * 100).toFixed(1)
+      : "0";
+
+  const averagePrice =
+    priceHistory.length > 0
+      ? (priceHistory.reduce((a, b) => a + b, 0) / priceHistory.length).toFixed(
+          2
+        )
+      : currentPrice.toFixed(2);
+
+  const recentHistory = state.history
+    .slice(-5)
+    .map(
+      (h) =>
+        `Round ${h.round}: ${h.action} ${h.amount} widgets at ${h.price.toFixed(
+          2
+        )} credits`
+    )
+    .join("\n");
 
   const prompt = `
-    you are ${playerName} and you are playing a game of rock paper scissors with ${opponentName}
-    you are feeling ${
-      feelings[Math.floor(Math.random() * feelings.length)]
-    } right now
-    your gut feeling is to go with ${randomMove} but you don't have to, it's just a gut feeling
+    You are ${playerName}, a widget trader in a competitive market with multiple traders.
+    Your current status:
+    - You have ${state.credits.toFixed(2)} credits available
+    - You own ${state.widgets} widgets
+    - You believe widgets are worth about ${state.valueEstimate.toFixed(
+      2
+    )} credits each
+    - The current market price is ${currentPrice.toFixed(2)} credits per widget
+    - Price change since start: ${priceChange}%
+    - Average historical price: ${averagePrice}
+    - This is round ${gameState.round} of ${MAX_ROUNDS}
+    
+    Your recent trading history:
+    ${recentHistory || "No previous trades"}
+    
     ${personality}
-    ${historyTalk}
-    ${extraStrategyLine}
-    please only respond with exact JSON (in the format {"action": string}) and no other text
+    
+    IMPORTANT: You must respond with ONLY a JSON object in this exact format:
+    For buying: {"action": "buy", "amount": 5}
+    For selling: {"action": "sell", "amount": 3}
+    For holding: {"action": "hold", "amount": 0}
+    
+    Rules:
+    - Response must be valid JSON
+    - No explanation text, ONLY the JSON object
+    - action must be exactly "buy", "sell", or "hold"
+    - amount must be a number (use 0 for hold)
+    - For buying: amount * current_price must not exceed your available credits
+    - For selling: amount must not exceed your owned widgets
+    - Consider price trends before making large purchases
   `;
 
   if (DEBUG_PROMPTS) {
@@ -62,9 +168,36 @@ async function generatePrompt(
 
   try {
     const action = JSON.parse(response);
-    if (!["rock", "paper", "scissors"].includes(action.action)) {
+    if (!["buy", "sell", "hold"].includes(action.action)) {
       throw new Error(`Invalid action received: ${action.action}`);
     }
+    if (typeof action.amount !== "number" || action.amount < 0) {
+      throw new Error(`Invalid amount: ${action.amount}`);
+    }
+    if (action.action === "hold" && action.amount !== 0) {
+      action.amount = 0; // Force amount to 0 for hold actions
+    }
+
+    // Validate trade is within means
+    if (action.action === "buy") {
+      const cost = action.amount * currentPrice;
+      if (cost > state.credits) {
+        console.log(
+          `⚠️ ${playerName} attempted to buy ${
+            action.amount
+          } widgets for ${cost.toFixed(
+            2
+          )} credits but only has ${state.credits.toFixed(2)} available`
+        );
+        return { action: "hold", amount: 0 };
+      }
+    } else if (action.action === "sell" && action.amount > state.widgets) {
+      console.log(
+        `⚠️ ${playerName} attempted to sell ${action.amount} widgets but only has ${state.widgets}`
+      );
+      return { action: "hold", amount: 0 };
+    }
+
     return action;
   } catch (error) {
     console.error(`Error parsing ${playerName}'s response:`, error);
@@ -73,143 +206,136 @@ async function generatePrompt(
 }
 
 async function playRound(): Promise<void> {
-  const loadedHistory = fs.readFileSync("history.txt", "utf8");
+  gameState.round++;
+  updatePrice();
 
-  let historyTalk =
-    loadedHistory.length > 0
-      ? `here is the history of actions:\n\n${loadedHistory}\n\nuse this history to make sure you don't repeat a pattern of actions that can be guessed`
-      : "(there is no history of actions yet, this is the first move, open with a random move no one can guess)";
-
-  if (DEBUG) {
-    console.log("historyTalk:", historyTalk);
-  }
-
-  const alicePersonality =
-    "you are a ruthless and cunning player and you will always win";
-  //"";
-
-  const aliceEntropyFeelings = ["Angry", "Excited", "Vindictive"];
-
-  const bobPersonality =
-    "you know alice is a ruthless and cunning player so you have to be careful";
-  //"";
-
-  const bobEntropyFeelings = ["Normal", "Midcurve", "Okay"];
-
-  let aliceAction;
-  let bobAction;
+  const agents = loadAgents();
+  let agentActions = [];
 
   if (CONCURRENT_PROMPTS) {
-    [aliceAction, bobAction] = await Promise.all([
+    const agentPromises = agents.map((agent) =>
       generatePrompt(
-        "alice",
-        "bob",
-        alicePersonality,
-        aliceEntropyFeelings,
-        historyTalk
-      ),
-      generatePrompt(
-        "bob",
-        "alice",
-        bobPersonality,
-        bobEntropyFeelings,
-        historyTalk
-      ),
-    ]);
+        agent.name,
+        "others",
+        agent.personality,
+        gameState.agents.get(agent.name)!,
+        gameState.currentPrice,
+        ""
+      )
+    );
+    agentActions = await Promise.all(agentPromises);
   } else {
-    aliceAction = await generatePrompt(
-      "alice",
-      "bob",
-      alicePersonality,
-      aliceEntropyFeelings,
-      historyTalk
-    );
-    bobAction = await generatePrompt(
-      "bob",
-      "alice",
-      bobPersonality,
-      bobEntropyFeelings,
-      historyTalk
-    );
+    for (const agent of agents) {
+      const action = await generatePrompt(
+        agent.name,
+        "others",
+        agent.personality,
+        gameState.agents.get(agent.name)!,
+        gameState.currentPrice,
+        ""
+      );
+      agentActions.push(action);
+    }
   }
 
-  if (DEBUG) {
-    console.log("aliceAction:", aliceAction);
-    console.log("bobAction:", bobAction);
-  }
+  // Process all trades
+  agents.forEach((agent, index) => {
+    const action = agentActions[index];
+    const agentState = gameState.agents.get(agent.name)!;
 
+    if (action.action === "buy") {
+      const cost = action.amount * gameState.currentPrice;
+      if (cost <= agentState.credits) {
+        agentState.credits -= cost;
+        agentState.widgets += action.amount;
+      } else {
+        console.log(
+          `🚫 Rejected ${agent.name}'s buy of ${action.amount} widgets - insufficient credits`
+        );
+      }
+    } else if (action.action === "sell") {
+      const proceeds = action.amount * gameState.currentPrice;
+      if (action.amount <= agentState.widgets) {
+        agentState.credits += proceeds;
+        agentState.widgets -= action.amount;
+      } else {
+        console.log(
+          `🚫 Rejected ${agent.name}'s sale of ${action.amount} widgets - insufficient widgets`
+        );
+      }
+    }
+
+    agentState.history.push({
+      action: action.action,
+      amount: action.amount,
+      price: gameState.currentPrice,
+      round: gameState.round,
+    });
+  });
+
+  // Log round results
   const timestamp = new Date().toISOString();
-  const result = determineWinner(aliceAction.action, bobAction.action);
-
-  if (result === "alice wins") {
-    totalScore.alice++;
-  } else if (result === "bob wins") {
-    totalScore.bob++;
-  } else {
-    totalScore.draw++;
-  }
-
-  const emojiMap: { [key in "rock" | "paper" | "scissors"]: string } = {
-    rock: "✊",
-    paper: "✋",
-    scissors: "✌️",
+  const actionEmoji = {
+    buy: "🟢",
+    sell: "🔴",
+    hold: "⚪",
   };
 
-  const resultText = `${timestamp} - Alice: ${aliceAction.action} ${
-    emojiMap[aliceAction.action]
-  } - Bob: ${bobAction.action} ${
-    emojiMap[bobAction.action]
-  } - Result: ${result}\n`;
+  let resultText = `📊 Round ${
+    gameState.round
+  } - Price: ${gameState.currentPrice.toFixed(2)}`;
 
-  if (DEBUG) {
-    console.log("Total Score:", totalScore);
-  }
+  agents.forEach((agent, index) => {
+    const agentState = gameState.agents.get(agent.name)!;
+    const action = agentActions[index];
+    const netWorth = calculateNetWorth(agentState, gameState.currentPrice);
 
-  fs.appendFileSync("history.txt", resultText);
+    resultText += ` | ${agent.name}: ${actionEmoji[action.action]} ${
+      action.action
+    } ${action.amount} (${netWorth.toFixed(2)})`;
+  });
 
-  console.log(
-    "🤖 Alice throws ",
-    aliceAction.action,
-    emojiMap[aliceAction.action],
-    " 🤖 Bob throws ",
-    bobAction.action,
-    emojiMap[bobAction.action],
-    " 🎉 Result: ",
-    result
-  );
+  resultText += "\n";
+
+  console.log(resultText.trim());
 }
 
 async function run(): Promise<void> {
   try {
-    while (true) {
-      const startTime = Date.now();
+    const startTime = Date.now();
 
-      for (let i = 0; i < MAX_ROUNDS; i++) {
-        await playRound();
-      }
-
-      const endTime = Date.now();
-      const totalTime = (endTime - startTime) / 1000;
-
-      console.log("🏆 Final Score:", totalScore);
-      console.log("🔄 Total Rounds:", MAX_ROUNDS);
-      console.log("🎯 Alice Wins:", totalScore.alice);
-      console.log("🎯 Bob Wins:", totalScore.bob);
-      console.log("🤝 Draws:", totalScore.draw);
-      console.log("⏱️ Total Time Taken:", totalTime, "seconds");
-
-      if (totalScore.draw > (MAX_ROUNDS / 3) * 1.05) {
-        console.log(
-          "⚠️ Too many draws, the model is repeating itself, needs entropy\n\n"
-        );
-      }
-
-      totalScore.alice = 0;
-      totalScore.bob = 0;
-      totalScore.draw = 0;
-
-      fs.writeFileSync("history.txt", "");
+    for (let i = 0; i < MAX_ROUNDS; i++) {
+      await playRound();
     }
+
+    const endTime = Date.now();
+    const totalTime = (endTime - startTime) / 1000;
+
+    console.log("\n🏆 Final Results:");
+
+    // Calculate and display final results for all agents
+    const agents = loadAgents();
+    const finalResults = agents.map((agent) => {
+      const agentState = gameState.agents.get(agent.name)!;
+      const netWorth = calculateNetWorth(agentState, gameState.currentPrice);
+      return { name: agent.name, worth: netWorth };
+    });
+
+    finalResults.forEach((result) => {
+      console.log(`${result.name}'s Net Worth: ${result.worth.toFixed(2)}`);
+    });
+
+    // Determine the winner
+    const winner = finalResults.reduce((prev, current) =>
+      prev.worth > current.worth ? prev : current
+    );
+
+    console.log(`Winner: ${winner.name}`);
+    console.log(`⏱️ Total Time: ${totalTime} seconds`);
+
+    // Reset game state
+    const freshState = initializeGameState();
+    Object.assign(gameState, freshState);
   } catch (error) {
     if (error instanceof AxiosError) {
       console.error("Error communicating with Ollama:", error.message);
@@ -219,24 +345,8 @@ async function run(): Promise<void> {
   }
 }
 
-type Move = "rock" | "paper" | "scissors";
-const moves: Move[] = ["rock", "paper", "scissors"];
-
-function determineWinner(aliceAction: Move, bobAction: Move): string {
-  if (aliceAction === bobAction) return "draw";
-  if (
-    (aliceAction === "rock" && bobAction === "scissors") ||
-    (aliceAction === "scissors" && bobAction === "paper") ||
-    (aliceAction === "paper" && bobAction === "rock")
-  ) {
-    return "alice wins";
-  }
-  return "bob wins";
-}
-
 try {
-  fs.writeFileSync("history.txt", "");
   run();
 } catch (error) {
-  console.error("Error setting up history file:", error);
+  console.error("Unexpected error:", error);
 }
