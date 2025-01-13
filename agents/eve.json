@@ -3,7 +3,6 @@
   "personality": "You are an opportunistic trader who: - Starts with small positions of 2-3 widgets - Watches others' trades before making big moves - Gets aggressive only when price is 10% below starting price - Keeps at least 200 credits in reserve at all times",
   "initialState": {
     "credits": 1000,
-    "widgets": 0,
-    "valueEstimate": 100
+    "widgets": 0
   }
 }

@@ -12,7 +12,6 @@ const PRICE_VOLATILITY = 0.15; // 15% max price movement per round
 interface PlayerState {
   credits: number;
   widgets: number;
-  valueEstimate: number;
   history: AgentHistory[];
 }
 
@@ -128,9 +127,6 @@ async function generatePrompt(
     Your current status:
     - You have ${state.credits.toFixed(2)} credits available
     - You own ${state.widgets} widgets
-    - You believe widgets are worth about ${state.valueEstimate.toFixed(
-      2
-    )} credits each
     - The current market price is ${currentPrice.toFixed(2)} credits per widget
     - Price change since start: ${priceChange}%
     - Average historical price: ${averagePrice}
@@ -205,9 +201,70 @@ async function generatePrompt(
   }
 }
 
+// Add new function for the Dungeon Master's narration
+async function getDungeonMasterNarration(
+  oldPrice: number,
+  newPrice: number,
+  gameState: GameState
+): Promise<string> {
+  const percentChange = ((newPrice - oldPrice) / oldPrice) * 100;
+  const direction = newPrice > oldPrice ? "increased" : "decreased";
+
+  // Format the history of all agents
+  const allTraderHistory = Array.from(gameState.agents.entries())
+    .map(([name, state]) => {
+      const recentMoves = state.history
+        .slice(-3) // Last 3 moves for each trader
+        .map(
+          (h) =>
+            `Round ${h.round}: ${h.action} ${
+              h.amount
+            } widgets at ${h.price.toFixed(2)} credits`
+        )
+        .join("\n");
+      return `${name}:\n${recentMoves}`;
+    })
+    .join("\n\n");
+
+  const prompt = `
+    You are a Dungeon Master narrating the widget market in a fantasy trading world.
+    The widget price has ${direction} from $${oldPrice.toFixed(
+    2
+  )} to $${newPrice.toFixed(2)} credits (${Math.abs(percentChange).toFixed(
+    1
+  )}% change).
+
+    Current Round: ${gameState.round} of ${MAX_ROUNDS}
+
+    Recent Market History:
+    ${allTraderHistory}
+    (the number in parenthesis is each agent's net worth)
+
+    If there is no market histopry: kick us off with a one or two liner making something up about how these widgets are cool and we are going to trade them. 
+    If there is market history: First, talk through how the players are doing if there is a history or purchases.
+    Most importantly, If there is market history: let's talk about the market for widgets and how/why it has changed in the way it has according to all historical lore above.
+    Consider the traders' recent actions in your narrative.
+    Be creative but concise it doesn't need to be all fantasy like, just tell us what is going on.
+    Response should be plain text, no quotes or formatting.
+  `;
+
+  return await sendToModel(prompt);
+}
+
+// Modify the playRound function to include the narration
 async function playRound(): Promise<void> {
+  console.log("\n-------------\n");
   gameState.round++;
+  const oldPrice = gameState.currentPrice;
   updatePrice();
+
+  // Get and display the Dungeon Master's narration with full context
+  const narration = await getDungeonMasterNarration(
+    oldPrice,
+    gameState.currentPrice,
+    gameState
+  );
+  console.log(`\n💬 ${narration}`);
 
   const agents = loadAgents();
   let agentActions = [];
@@ -278,12 +335,13 @@ async function playRound(): Promise<void> {
   const actionEmoji = {
     buy: "🟢",
     sell: "🔴",
+
     hold: "⚪",
   };
 
-  let resultText = `📊 Round ${
-    gameState.round
-  } - Price: ${gameState.currentPrice.toFixed(2)}`;
+  let resultText = `\n\n⚙️  Widgets: $${gameState.currentPrice.toFixed(
+    2
+  )} credits\n\n📊 Round ${gameState.round}`;
 
   agents.forEach((agent, index) => {
     const agentState = gameState.agents.get(agent.name)!;
@@ -291,18 +349,26 @@ async function playRound(): Promise<void> {
     const netWorth = calculateNetWorth(agentState, gameState.currentPrice);
 
     resultText += ` | ${agent.name}: ${actionEmoji[action.action]} ${
-      action.action
-    } ${action.amount} (${netWorth.toFixed(2)})`;
+      action.action === "hold" ? "hold" : `${action.action} ${action.amount}`
+    } (${agentState.widgets}) ($${agentState.credits.toFixed(
+      2
+    )}) [$${netWorth.toFixed(2)}]`;
   });
 
   resultText += "\n";
 
-  console.log(resultText.trim());
+  console.log(resultText);
 }
 
 async function run(): Promise<void> {
   try {
     const startTime = Date.now();
+
+    console.log("\n --- Agents --- \n");
+    const agents = loadAgents();
+    agents.forEach((agent) => {
+      console.log(`${agent.name}: ${agent.personality}\n`);
+    });
 
     for (let i = 0; i < MAX_ROUNDS; i++) {
       await playRound();
@@ -313,8 +379,6 @@ async function run(): Promise<void> {
 
     console.log("\n🏆 Final Results:");
 
-    // Calculate and display final results for all agents
-    const agents = loadAgents();
     const finalResults = agents.map((agent) => {
       const agentState = gameState.agents.get(agent.name)!;
       const netWorth = calculateNetWorth(agentState, gameState.currentPrice);
@@ -322,7 +386,7 @@ async function run(): Promise<void> {
     });
 
     finalResults.forEach((result) => {
-      console.log(`${result.name}'s Net Worth: ${result.worth.toFixed(2)}`);
+      console.log(`${result.name}'s Net Worth: $${result.worth.toFixed(2)}`);
     });
 
     // Determine the winner
@@ -346,6 +410,7 @@ async function run(): Promise<void> {
 }
 
 try {
+  console.log("\n --- Traders' Delight: a widget marketplace -- \n");
   run();
 } catch (error) {
   console.error("Unexpected error:", error);
