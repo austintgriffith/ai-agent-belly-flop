@@ -29,3 +29,9 @@ But this prototype reveals an issue with the models repeating themselves...
 check out the trading game branch for a more interesting game:
 
 [https://github.com/austintgriffith/ai-agent-belly-flop/tree/trading-game](https://github.com/austintgriffith/ai-agent-belly-flop/tree/trading-game)
+
+-------
+
+check out this super slow version that even has a dungeon master:
+
+[https://github.com/austintgriffith/ai-agent-belly-flop/tree/dungeon-master-trading-game](https://github.com/austintgriffith/ai-agent-belly-flop/tree/dungeon-master-trading-game)
